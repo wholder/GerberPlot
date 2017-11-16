@@ -382,19 +382,19 @@ class GerberPlot extends JPanel implements Runnable {
   }
 
   private BufferedImage getBoardImage (double scale) {
-    double scaleFactor = SCREEN_PPI / (renderScale / scale);
-    Dimension size = new Dimension((int) (bounds.width * scaleFactor) + pixelGap * 2, (int) (bounds.height * scaleFactor) + pixelGap * 2);
-    BufferedImage bufImg = new BufferedImage(size.width, size.height, BufferedImage.TYPE_4BYTE_ABGR);
+    double scaleFactor = (SCREEN_PPI / (renderScale / scale)) / renderScale;
+    int bufWid = (int) (bounds.width * scaleFactor) + pixelGap * 2;
+    int bufHyt = (int) (bounds.height * scaleFactor) + pixelGap * 2;
+    BufferedImage bufImg = new BufferedImage(bufWid, bufHyt, BufferedImage.TYPE_4BYTE_ABGR);
     Graphics2D offScr = (Graphics2D) bufImg.getGraphics();
     offScr.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
     offScr.setColor(BOARD);
-    offScr.fillRect(0, 0, size.width, size.height);
-    offScr.scale(scale, scale);
-    offScr.translate(pixelGap / scale, pixelGap / scale);
+    offScr.fillRect(0, 0, bufWid, bufHyt);
+    offScr.translate(pixelGap, pixelGap);
     for (DrawItem item : drawItems) {
       // Invert Y axis to match Java Graphics's upper-left origin
       AffineTransform at = new AffineTransform();
-      at.scale(1, -1);
+      at.scale(scale, -scale);
       at.translate(-bounds.x, -bounds.height);
       Shape shape = at.createTransformedShape(item.shape);
       offScr.setColor(item.drawCopper ? COPPER : BOARD);

@@ -11,6 +11,6 @@ Java 8 JDK, or later must be installed in order to compile the code.  There is a
 
     G36*G01X-0001Y-0001D02*X1076D01*Y0226*X-0001*Y-0001*G37*
 
-  Will not render because all of the coordinate values need to be followed by a D01 operation to render, such as:
+  Will not render because all of the coordinate values need to be followed by a `D01` operation, like this:
 
     G36*G01X-0001Y-0001D02*X1076D01*Y0226D01*X-0001D01*Y-0001D01*G37*

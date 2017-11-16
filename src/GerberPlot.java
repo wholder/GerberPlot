@@ -74,6 +74,7 @@ class GerberPlot extends JPanel implements Runnable {
   private static final int      RENDER_OUTLINE = 3;
   // Internal scaling parameters
   private static final double   renderScale = 10;   // scales up Shapes to improve render
+  private static final double   defaultViewScale = 1.0;
   private static final int      pixelGap = 2;       // Adds border around dsplayed image
   // State machine variables
   private List<String> cmdList;     // List containing all single commands and tokens
@@ -350,8 +351,8 @@ class GerberPlot extends JPanel implements Runnable {
             }
           }
         }
-        // Set JPanel dimensions to display board at 5x scale
-        double scaleFactor = SCREEN_PPI / (renderScale / 1);
+        // Set JPanel dimensions to display board at defaultViewScale
+        double scaleFactor = SCREEN_PPI / (renderScale / defaultViewScale);
         Dimension size = new Dimension((int) (bounds.width * scaleFactor) + pixelGap * 2, (int) (bounds.height * scaleFactor) + pixelGap * 2);
         setPreferredSize(size);
         frame.pack();

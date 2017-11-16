@@ -1,0 +1,8 @@
+<component name="ArtifactManager">
+  <artifact type="jar" build-on-make="true" name="GerberPlot:jar">
+    <output-path>$PROJECT_DIR$/out/artifacts/GerberPlot_jar</output-path>
+    <root id="archive" name="GerberPlot.jar">
+      <element id="module-output" name="GerberPlot" />
+    </root>
+  </artifact>
+</component>

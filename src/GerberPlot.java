@@ -8,7 +8,6 @@ import java.awt.image.BufferedImage;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
-import java.io.IOException;
 import java.util.*;
 import java.util.List;
 import java.util.prefs.Preferences;
@@ -46,6 +45,7 @@ import java.util.prefs.Preferences;
  */
 
 class GerberPlot extends JPanel implements Runnable {
+  private static Preferences    prefs = Preferences.userRoot().node(GerberPlot.class.getName());
   private static final double   SCREEN_PPI = Toolkit.getDefaultToolkit().getScreenResolution();
   // Colors used to Render elements of the PCB design
   private static final Color    COPPER = new Color(0xB87333);
@@ -77,44 +77,53 @@ class GerberPlot extends JPanel implements Runnable {
   private static final double   defaultViewScale = 1.0;
   private static final int      pixelGap = 2;       // Adds border around dsplayed image
   // State machine variables
-  private List<String> cmdList;     // List containing all single commands and tokens
-  private int cmdIdx;               // Current position in cmdList for parser
-  private boolean extCmd;           // True when processing an extended command
-  private double curX;              // Current X position
-  private double curY;              // Current Y position
-  private double arcX;              // X center of arc
-  private double arcY;              // Y center of arc
-  private int interpol = LINEAR;    // Current interpolation mode
-  private boolean inRegion;         // Flag for Path2D-based region active
-  private boolean multi;            // Flag for single or multiquadrant interpolation
-  private boolean stop;             // Stop program flag
-  private boolean millimeters;      // If true, all coordinates are in millimeters, else inches
-  private Path2D.Double path;       // Polygon of the area to be filled
+  private List<String> cmdList;       // List containing all single commands and tokens
+  private int cmdIdx;                 // Current position in cmdList for parser
+  private boolean extCmd;             // True when processing an extended command
+  private double curX;                // Current X position
+  private double curY;                // Current Y position
+  private double arcX;                // X center of arc
+  private double arcY;                // Y center of arc
+  private int interpol = LINEAR;      // Current interpolation mode
+  private boolean inRegion;           // Flag for Path2D-based region active
+  private boolean multi;              // Flag for single or multiquadrant interpolation
+  private boolean stop;               // Stop program flag
+  private boolean millimeters;        // If true, all coordinates are in millimeters, else inches
+  private Path2D.Double path;         // Polygon of the area to be filled
   private boolean pathStarted;
   // State machine variables for the extended commands
-  private boolean omitLeadZeros;    // Omit leading zeros, else omit trailing zeroes
-  private int xSgnf = 2;            // Number of digits of X-axis before decimal
-  private int xFrac = 3;            // Number of digits of X-axis after decimal
-  private int ySgnf = 2;            // Number of digits of Y-axis before decimal
-  private int yFrac = 3;            // Number of digits of Y-axis after decimal
+  private boolean omitLeadZeros;      // Omit leading zeros, else omit trailing zeroes
+  private int xSgnf = 2;              // Number of digits of X-axis before decimal
+  private int xFrac = 3;              // Number of digits of X-axis after decimal
+  private int ySgnf = 2;              // Number of digits of Y-axis before decimal
+  private int yFrac = 3;              // Number of digits of Y-axis after decimal
   // Aperture lookup Map and working variable
   private Map<String,Macro> macroMap;
   private Map<Integer,List<Aperture>> aperturesMap;
   private List<Aperture>  apertures;
   // PCB shape and control flags
-  private boolean isDark = true;    // True if drawing copper
-  private Area board;
-  private Rectangle.Double bounds;
-  private List<DrawItem> drawItems;
-  private int renderMode = DRAW_IMAGE;
-  private boolean built;
-  private boolean rendered;
-  private boolean running;
+  private boolean isDark = true;      // True if drawing copper
+  private Area board;                 // Area object used to build PCB shape
+  private Rectangle.Double bounds;    // Computed bounding box for PCB layer
+  private List<DrawItem> drawItems;   // Gerber ordered List of shapes used to draw PCB
+  private int renderMode;             // Current render mode DRAW_IMAGE, etc.
+  private boolean built;              // Set true when drawItems list is built
+  private boolean rendered;           // Set true when Area is built
+  private boolean running;            // Set true while building drawItems or Area
+  private int lastDone;               // Used by progress bar logic
+  // GUI-related variables
   private static JFrame frame;
-  private int lastDone;
   private JMenu fileMenu, optMenu;
+  private Font ocr;
+  private HashMap<TextAttribute, Object> attrs = new HashMap<>();
 
-  private Preferences prefs = Preferences.userRoot().node(this.getClass().getName());
+  {
+    // Set up Font attributes for title page
+    attrs.put(TextAttribute.KERNING, TextAttribute.KERNING_ON);
+    attrs.put(TextAttribute.LIGATURES, TextAttribute.LIGATURES_ON);
+    attrs.put(TextAttribute.TRACKING, -0.18);
+    ocr = (new Font("OCR A Std", Font.PLAIN, 95)).deriveFont(attrs);
+  }
 
   static class DrawItem {
     boolean   drawCopper;
@@ -162,7 +171,6 @@ class GerberPlot extends JPanel implements Runnable {
     inRegion = false;
     multi = false;
     stop = false;
-    omitLeadZeros = true;
     millimeters = false;
     xSgnf = 2;
     xFrac = 3;
@@ -195,6 +203,7 @@ class GerberPlot extends JPanel implements Runnable {
           frame.setTitle(this.getClass().getSimpleName() + " - " + tFile.toString());
           built = false;
           rendered = false;
+          renderMode = DRAW_IMAGE;
           // Read file and strip out line delimiters
           StringBuilder buf = new StringBuilder();
           BufferedReader br = new BufferedReader(new FileReader(tFile));
@@ -239,13 +248,13 @@ class GerberPlot extends JPanel implements Runnable {
     frame.setJMenuBar(menuBar);
   }
 
-  public static void main (String[] argv) throws IOException {
+  public static void main (String[] argv)  {
     frame = new JFrame();
-    frame.setLocation(50, 50);
     GerberPlot panel = new GerberPlot(frame);
     panel.setPreferredSize(new Dimension(600, 400));
     frame.add("Center", panel);
     frame.pack();
+    frame.setLocationRelativeTo(null);
     frame.setVisible(true);
     frame.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
   }
@@ -258,16 +267,13 @@ class GerberPlot extends JPanel implements Runnable {
     Graphics2D offScr = (Graphics2D) bufImg.getGraphics();
     offScr.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
     if (built) {
+      double scaleX = (size.width - pixelGap * 2) / bounds.width;
+      double scaleY = (size.height - pixelGap * 2) / bounds.height;
+      double scale = Math.min(scaleX, scaleY);
       if (renderMode == DRAW_IMAGE) {
-        double scaleX = (size.width - pixelGap * 2) / bounds.width;
-        double scaleY = (size.height - pixelGap * 2) / bounds.height;
-        double scale = Math.min(scaleX, scaleY);
         offScr.drawImage(getBoardImage(scale), null, 0, 0);
       } else {
         if (board != null) {
-          double scaleX = (size.width - pixelGap * 2) / bounds.width;
-          double scaleY = (size.height - pixelGap * 2) / bounds.height;
-          double scale = Math.min(scaleX, scaleY);
           offScr.setColor(BOARD);
           offScr.fillRect(0, 0, size.width, size.height);
           offScr.scale(scale, scale);
@@ -283,35 +289,27 @@ class GerberPlot extends JPanel implements Runnable {
         } else {
           // Draw progress bar during rendering step
           float ratio = lastDone / 100f;
-          Rectangle2D bar = new Rectangle2D.Float(40, size.height / 2 - 10, size.width * ratio - 80, 20);
+          Rectangle2D bar = new Rectangle2D.Float(40, size.height / 2.0f - 10, size.width * ratio - 80, 20);
           offScr.setColor(Color.blue);
           offScr.fill(bar);
-          Rectangle2D frm = new Rectangle2D.Float(40, size.height / 2 - 10, size.width - 80, 20);
+          Rectangle2D frm = new Rectangle2D.Float(40, size.height / 2.0f - 10, size.width - 80, 20);
           offScr.setColor(Color.gray);
           offScr.setStroke(new BasicStroke(3.0f));
           offScr.draw(frm);
         }
       }
     } else {
+      // Draw Title Page
       String text = this.getClass().getSimpleName();
-      Font font = new Font("OCR A Std", Font.PLAIN, 80);
-      HashMap<TextAttribute, Object> attrs = new HashMap<>();
-      attrs.put(TextAttribute.KERNING, TextAttribute.KERNING_ON);
-      attrs.put(TextAttribute.LIGATURES, TextAttribute.LIGATURES_ON);
-      attrs.put(TextAttribute.TRACKING, -0.15);
-      font = font.deriveFont(attrs);
-      GlyphVector gv = font.createGlyphVector(g2.getFontRenderContext(), text);
+      GlyphVector gv = ocr.createGlyphVector(g2.getFontRenderContext(), text);
       Rectangle2D bnds = gv.getVisualBounds();
       AffineTransform at = new AffineTransform();
-      double xOff = (size.width - bnds.getWidth()) / 2;
-      double yOff = (size.height - bnds.getHeight()) / 2;
-      at.translate(-bnds.getX() + xOff, -bnds.getY() + yOff);
+      at.translate(-bnds.getX() + (size.width - bnds.getWidth()) / 2, -bnds.getY() + (size.height - bnds.getHeight()) / 2);
       g2.setColor(Color.lightGray);
       g2.fill(at.createTransformedShape(gv.getOutline()));
-      at.translate(-3, -3);
+      at.translate(-4, -4);
       g2.setColor(COPPER);
       g2.fill(at.createTransformedShape(gv.getOutline()));
-
     }
     offScr.dispose();
     g2.drawImage(bufImg, 0, 0, this);

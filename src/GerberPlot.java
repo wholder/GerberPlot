@@ -21,6 +21,8 @@ import java.util.prefs.Preferences;
  * primitives remain untested, as I've yet to find a Gerber design that uses them. The untested code is noted in the
  * source for the flashAperture() method.
  *
+ *  https://www.ucamco.com/en/gerber/downloads
+ *
  * Internally, the code first converts the Gerber file into a list of shapes in "drawItems".  Then, if renderMode is
  * set to DRAW_IMAGE (the default when started), it draws this list of shapes directly to the screen.  However, if
  * renderMode is set to RENDER_FILLED or RENDER_OUTLINE, getBoardArea() is called to compute an Area shape by using
@@ -99,8 +101,8 @@ class GerberPlot extends JPanel implements Runnable {
   private int yFrac = 3;              // Number of digits of Y-axis after decimal
   // Aperture lookup Map and working variable
   private Map<String,Macro> macroMap;
-  private Map<Integer,List<Aperture>> aperturesMap;
-  private List<Aperture>  apertures;
+  private Map<Integer,Aperture> aperturesMap;
+  private Aperture aperture;
   // PCB shape and control flags
   private boolean isDark = true;      // True if drawing copper
   private Area board;                 // Area object used to build PCB shape
@@ -160,7 +162,6 @@ class GerberPlot extends JPanel implements Runnable {
   private void resetStateMachine () {
     bounds = new Rectangle.Double();
     drawItems = new ArrayList<>();
-    apertures = new LinkedList<>();
     macroMap = new HashMap<>();
     aperturesMap = new HashMap<>();
     omitLeadZeros = true;
@@ -531,8 +532,6 @@ class GerberPlot extends JPanel implements Runnable {
           int te = cmd.indexOf(',', nl);
           String type = cmd.substring(nl, te);
           cmd = cmd.substring(te + 1);
-          List<Aperture> aList = new LinkedList<>();
-          aperturesMap.put(pd, aList);
           if (type.length() > 1) {
             // Process one, or more Aperture primitives defined in a Macro
             List<Double> aParms = new ArrayList<>();
@@ -585,7 +584,7 @@ class GerberPlot extends JPanel implements Runnable {
                       app.addParm(Double.parseDouble(mParm));
                     }
                   }
-                  aList.add(app);
+                  aperturesMap.put(pd, app);
                 }
               }
             }
@@ -613,7 +612,7 @@ class GerberPlot extends JPanel implements Runnable {
               while (st.hasMoreTokens()) {
                 app.addParm(Double.parseDouble(st.nextToken()));
               }
-              aList.add(app);
+              aperturesMap.put(pd, app);
             }
           }
           break;
@@ -767,8 +766,8 @@ class GerberPlot extends JPanel implements Runnable {
             int nd = Integer.parseInt(cmd.substring(1, idx));
             cmd = cmd.substring(idx);
             if (nd >= 10) {               // Select aperture
-              apertures = aperturesMap.get(nd);
-              if (apertures == null) {
+              aperture = aperturesMap.get(nd);
+              if (aperture == null) {
                 throw new IllegalStateException("Aperture " + nd + " not found");
               }
             } else if (nd == 1) {         // D01: Interpolate operation
@@ -781,19 +780,13 @@ class GerberPlot extends JPanel implements Runnable {
                     pathStarted = true;
                   }
                 } else {
-                  for (Aperture aper : apertures) {
-                    drawArc(aper, nx, ny, false);
-                  }
+                  drawArc(aperture, nx, ny, false);
                 }
               } else {
                 if (interpol == LINEAR) {
-                  for (Aperture aper : apertures) {
-                    interpolateAperture(aper, curX, curY, nx, ny);
-                  }
+                  interpolateAperture(aperture, curX, curY, nx, ny);
                 } else {
-                  for (Aperture aper : apertures) {
-                    drawArc(aper, nx, ny, true);
-                  }
+                  drawArc(aperture, nx, ny, true);
                 }
               }
             } else if (nd == 2) {         // D02: Move operation
@@ -806,9 +799,7 @@ class GerberPlot extends JPanel implements Runnable {
                 }
               }
             } else if (nd == 3) {         // D03: Flash
-              for (Aperture aper : apertures) {
-                flashAperture(aper, nx, ny);
-              }
+              flashAperture(aperture, nx, ny);
             }
           } continue;
           case 'M':
@@ -1010,6 +1001,7 @@ class GerberPlot extends JPanel implements Runnable {
     if (app.type == CIRCLE) {
       double diam = dW(app.parms.get(0));
       BasicStroke s1 = new BasicStroke((float) diam, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND);
+      addToBoard(s1.createStrokedShape(new Line2D.Double(x1, y1, x2, y2)), isDark);
       addToBoard(s1.createStrokedShape(new Line2D.Double(x1, y1, x2, y2)), isDark);
     } else if (app.type == RECTANGLE) {
       double wid = dW(app.parms.get(0));

@@ -74,8 +74,8 @@ class GerberPlot extends JPanel implements Runnable {
   private static final int      RENDER_OUTLINE = 3;
   // Internal scaling parameters
   private static final double   renderScale = 10;   // scales up Shapes to improve render
-  private static final double   defaultViewScale = 1.0;
-  private static final int      pixelGap = 2;       // Adds border around dsplayed image
+  private static double         defaultViewScale = 4.0;
+  private static final int      pixelGap = 4;       // Adds border around displayed image
   // State machine variables
   private List<String> cmdList;       // List containing all single commands and tokens
   private int cmdIdx;                 // Current position in cmdList for parser
@@ -106,10 +106,11 @@ class GerberPlot extends JPanel implements Runnable {
   private Area board;                 // Area object used to build PCB shape
   private Rectangle.Double bounds;    // Computed bounding box for PCB layer
   private List<DrawItem> drawItems;   // Gerber ordered List of shapes used to draw PCB
-  private int renderMode;             // Current render mode DRAW_IMAGE, etc.
+  private int renderMode = DRAW_IMAGE;// Current render mode DRAW_IMAGE, etc.
   private boolean built;              // Set true when drawItems list is built
   private boolean rendered;           // Set true when Area is built
   private boolean running;            // Set true while building drawItems or Area
+  private boolean fileLoaded;         // Set true when File is read and ready to render
   private int lastDone;               // Used by progress bar logic
   // GUI-related variables
   private static JFrame frame;
@@ -203,7 +204,6 @@ class GerberPlot extends JPanel implements Runnable {
           frame.setTitle(this.getClass().getSimpleName() + " - " + tFile.toString());
           built = false;
           rendered = false;
-          renderMode = DRAW_IMAGE;
           // Read file and strip out line delimiters
           StringBuilder buf = new StringBuilder();
           BufferedReader br = new BufferedReader(new FileReader(tFile));
@@ -221,6 +221,7 @@ class GerberPlot extends JPanel implements Runnable {
               cmdList.add(pos++, token);
             }
           }
+          fileLoaded = true;
           (new Thread(this)).start();
         } catch (Exception ex) {
           JOptionPane.showMessageDialog(this, "Unable to load file", "Error", JOptionPane.PLAIN_MESSAGE);
@@ -230,20 +231,44 @@ class GerberPlot extends JPanel implements Runnable {
     });
     fileMenu.add(loadGbr);
     menuBar.add(fileMenu);
+    // Add "Scale" Menu
+    JMenu scaleMenu = new JMenu("Scale");
+    ButtonGroup scaleGroup = new ButtonGroup();
+    for (int ii = 1; ii <= 8; ii *= 2) {
+      final double sc = ii;
+      JRadioButtonMenuItem sItem = new JRadioButtonMenuItem(ii + " : " + 1);
+      scaleGroup.add(sItem);
+      scaleMenu.add(sItem);
+      if (ii == defaultViewScale) {
+        sItem.setSelected(true);
+      }
+      sItem.addActionListener(e -> {
+        // Set JPanel dimensions to display board at new scale factor
+        defaultViewScale = sc;
+        if (built) {
+          double scaleFactor = SCREEN_PPI / (renderScale / sc);
+          Dimension size = new Dimension((int) (bounds.width * scaleFactor) + pixelGap * 2, (int) (bounds.height * scaleFactor) + pixelGap * 2);
+          setPreferredSize(size);
+          frame.pack();
+          repaint();
+        }
+      });
+    }
+    menuBar.add(scaleMenu);
     // Add "Options" Menu
     setBackground(BOARD);
     optMenu = new JMenu("Options");
-    ButtonGroup group = new ButtonGroup();
+    ButtonGroup optGroup = new ButtonGroup();
     menuBar.add(optMenu);
     JRadioButtonMenuItem mItem;
     optMenu.add(mItem = new JRadioButtonMenuItem("Draw Direct", true));
-    group.add(mItem);
+    optGroup.add(mItem);
     mItem.addActionListener(e -> setDisplayMode(DRAW_IMAGE));
     optMenu.add(mItem = new JRadioButtonMenuItem("Render Filled"));
-    group.add(mItem);
+    optGroup.add(mItem);
     mItem.addActionListener(e -> setDisplayMode(RENDER_FILLED));
     optMenu.add(mItem = new JRadioButtonMenuItem("Render Outline"));
-    group.add(mItem);
+    optGroup.add(mItem);
     mItem.addActionListener(e -> setDisplayMode(RENDER_OUTLINE));
     frame.setJMenuBar(menuBar);
   }
@@ -317,7 +342,9 @@ class GerberPlot extends JPanel implements Runnable {
 
   private void setDisplayMode (int mode) {
     renderMode = mode;
-    (new Thread(this)).start();
+    if (fileLoaded) {
+      (new Thread(this)).start();
+    }
   }
 
   public void run () {

@@ -44,6 +44,9 @@ import java.util.prefs.Preferences;
  *    G36*G01X-0001Y-0001D02*X1076D01*Y0226D01*X-0001D01*Y-0001D01*G37*
  *
  * Note: derived from GerberPlotArea3 in GerberTools Project
+ *
+ *  Author: Wayne Holder, 2019
+ *  License: MIT (https://opensource.org/licenses/MIT)
  */
 
 class GerberPlot extends JPanel implements Runnable {
@@ -79,6 +82,7 @@ class GerberPlot extends JPanel implements Runnable {
   private static double         defaultViewScale = 4.0;
   private static final int      pixelGap = 4;       // Adds border around displayed image
   // State machine variables
+  private String gerber;
   private List<String> cmdList;       // List containing all single commands and tokens
   private int cmdIdx;                 // Current position in cmdList for parser
   private boolean extCmd;             // True when processing an extended command
@@ -183,6 +187,16 @@ class GerberPlot extends JPanel implements Runnable {
     lastDone = 0;
   }
 
+  private GerberPlot (String gerber) {
+    this.gerber = gerber;
+  }
+
+  public static Area parseGerberFile (String gerber) {
+    GerberPlot parser = new GerberPlot(gerber);
+    parser.parse();
+    return parser.getBoardArea();
+  }
+
   private GerberPlot (JFrame frame) {
     frame.setTitle(this.getClass().getSimpleName());
     JMenuBar menuBar = new JMenuBar();
@@ -213,16 +227,7 @@ class GerberPlot extends JPanel implements Runnable {
             buf.append(line);
           }
           br.close();
-          cmdList = new ArrayList<>();
-          StringTokenizer st = new StringTokenizer(buf.toString(), "%*", true);
-          int pos = 0;
-          while (st.hasMoreTokens()) {
-            String token = st.nextToken();
-            if (!token.equals("*")) {
-              cmdList.add(pos++, token);
-            }
-          }
-          fileLoaded = true;
+          gerber = buf.toString();
           (new Thread(this)).start();
         } catch (Exception ex) {
           JOptionPane.showMessageDialog(this, "Unable to load file", "Error", JOptionPane.PLAIN_MESSAGE);
@@ -348,35 +353,49 @@ class GerberPlot extends JPanel implements Runnable {
     }
   }
 
+  private void parse () {
+    cmdList = new ArrayList<>();
+    StringTokenizer st = new StringTokenizer(gerber, "%*", true);
+    int pos = 0;
+    while (st.hasMoreTokens()) {
+      String token = st.nextToken();
+      if (!token.equals("*")) {
+        cmdList.add(pos++, token);
+      }
+    }
+    fileLoaded = true;
+    resetStateMachine();
+    while (cmdIdx < cmdList.size() && !stop) {
+      String cmd = cmdList.get(cmdIdx);
+      // If we entered or exited an extended command, switch the flag
+      if (cmd.equals("%")) {
+        extCmd = !extCmd;
+        cmdIdx++;
+        continue;
+      }
+      if (extCmd) {
+        // Handle extended RS-274X command
+        if (!doExtendedCmd()) {
+          System.out.println("Error: Failed executing command: " + cmd);
+          return;
+        }
+      } else {
+        // Handle standard command
+        if (!doNormalCmd()) {
+          System.out.println("Error: Failed executing command: " + cmd);
+          return;
+        }
+      }
+    }
+  }
+
   public void run () {
     if (!running) {
       fileMenu.setEnabled(false);
       optMenu.setEnabled(false);
       running = true;
       if (!built) {
-        resetStateMachine();
-        while (cmdIdx < cmdList.size() && !stop) {
-          String cmd = cmdList.get(cmdIdx);
-          // If we entered or exited an extended command, switch the flag
-          if (cmd.equals("%")) {
-            extCmd = !extCmd;
-            cmdIdx++;
-            continue;
-          }
-          if (extCmd) {
-            // Handle extended RS-274X command
-            if (!doExtendedCmd()) {
-              System.out.println("Error: Failed executing command: " + cmd);
-              return;
-            }
-          } else {
-            // Handle standard command
-            if (!doNormalCmd()) {
-              System.out.println("Error: Failed executing command: " + cmd);
-              return;
-            }
-          }
-        }
+        parse();
         // Set JPanel dimensions to display board at defaultViewScale
         double scaleFactor = SCREEN_PPI / (renderScale / defaultViewScale);
         Dimension size = new Dimension((int) (bounds.width * scaleFactor) + pixelGap * 2, (int) (bounds.height * scaleFactor) + pixelGap * 2);
@@ -431,6 +450,7 @@ class GerberPlot extends JPanel implements Runnable {
     return bufImg;
   }
 
+  // TODO: can this be improved?
   private Area getBoardArea () {
     Area pcb = new Area();
     int count = 0;
